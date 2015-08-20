@@ -1,0 +1,208 @@
+---
+title: "Project"
+author: "Phillip Chin"
+date: "Tuesday, August 18, 2015"
+output:
+  html_document:
+    pandoc_args: [
+      "+RTS", "-K64m",
+      "-RTS"
+    ]
+---
+
+```{r echo=FALSE, include=FALSE}
+#install.packages("doParallel")
+#library(doParallel)
+#registerDoParallel(cores=2)
+
+library(dplyr)
+library(caret)
+library(rattle)
+library(qdap)
+library(ggplot2)
+library(arm)
+library(hash)
+
+setwd('C:/Users/phil/Documents/coursera/Data Science/machine_learning/predmachlearn031')
+```
+
+##Executive Summary
+A - exactly according to the specification
+B - throwing the elbows to the front
+C - lifting the dumbbell only halfway 
+D - lowering the dumbbell only halfway 
+E - throwing the hips to the front 
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3jEzlbcK7
+
+##Loading and Cleaning Data/Exploratory Data Analysis
+```{r echo=FALSE}
+removeBadColumns <- function(df) {
+  cleanedDf <- df[, -which(colnames(df) %in% c("X", "user_name", 
+                                            "raw_timestamp_part_1", 
+                                            "raw_timestamp_part_2", 
+                                            "cvtd_timestamp",
+                                            "new_window", "num_window"))]
+  cleanedDf <- cleanedDf[, 
+                  -grep("^(total|kurtosis|skewness|max|min|var|avg|stddev)", 
+                        colnames(cleanedDf))]
+  
+  # remove NA columns
+  cleanedDf <- cleanedDf[,colSums(is.na(cleanedDf))<nrow(cleanedDf)]
+  
+  # remove columns with near zero variance
+  return(cleanedDf[, -nearZeroVar(cleanedDf)])
+}
+
+trainSet <- read.csv('pml-training.csv', header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
+trainSet <- removeBadColumns(trainSet)
+```
+There are two files:
+* pml-training.csv - training data set
+* pml-testing.csv - test data set
+Some data cleaning was necessary.  All columns with only NA's were removed.  All columns with a near zero variance were also removed.  In the training data set, there are some extra non-sensor measurement data (i.e. user_name, raw_timestamp_part_1, etc.) and calculated data (i.e. total_..., kurtosis_..., max_..., etc.).  Those fields were removed to further reduce the training set and were not used in the training.  
+
+The training data set were normalized(center/scale). NA's were replaced with imputted values(knnImpute). 
+```{r echo=FALSE}
+# standardize the data
+prepTrainSetObj <- preProcess(trainSet[, -which(colnames(trainSet) == "classe")], method=c("center", "scale"))
+prepTrainSet <- predict(prepTrainSetObj, trainSet[, -which(colnames(trainSet) == "classe")])
+
+# impute NA's
+imputeTrainObj <- preProcess(prepTrainSet, method="knnImpute")
+imputTrainSet <- predict(imputeTrainObj, prepTrainSet)
+imputTrainSet$classe <- trainSet$classe
+trainSet <- imputTrainSet
+```
+
+```{r echo=FALSE}
+# split training data set into training and probe data set 
+set.seed(5150)
+trainPercent <- 0.25
+```
+`r (trainPercent*100)`% of the training data set was used for the actual training.  The rest was used as our probe data set for checking the accuracy of our model.
+```{r echo=FALSE}
+inTrain <- createDataPartition(y=trainSet$classe, p=trainPercent, 
+                               list=FALSE)
+myTrainSet <- trainSet[inTrain,]
+myProbeSet <- trainSet[-inTrain,]
+```
+
+```{r echo=FALSE}
+corrCutoff = 0.9
+currCols <- setdiff(colnames(myTrainSet), c('classe'))
+correlationMatrix <- cor(myTrainSet[,currCols])
+highlyCorrelatedIdx <- findCorrelation(correlationMatrix, cutoff=corrCutoff)
+highlyCorrelatedCols <- currCols[highlyCorrelatedIdx]
+myTrainSet <- myTrainSet[,-highlyCorrelatedIdx]
+myProbeSet <- myProbeSet[,-highlyCorrelatedIdx]
+```
+Based on the new training set, remove columns with a correlation of `r corrCutoff` or greater. Only the following columns were used:
+```{r echo=FALSE}
+colnames(trainSet)
+```
+
+Here is a heat map for our training data. The red regions are mostly on the diagonal as expected. There are not that many red hot spots elsewhere suggesting that none of the other values are highly correlated.
+```{r echo=FALSE}
+pred.corr <- cor(myTrainSet[, -which(colnames(myTrainSet) == "classe")])
+pal <- colorRampPalette(c("blue", "white", "red"))(n = 199)
+heatmap(pred.corr, col = pal)
+```
+
+For the test data set, all of the unnecessary columns were removed. Only the columns that were kept in the training data set were saved.  All NA's were replaced with 0's. They were not imputted.
+```{r echo=FALSE}
+# test data set
+testSet <- read.csv('pml-testing.csv', header = TRUE, na.strings = c("NA", "#DIV/0!", ""))
+
+testSet <- testSet[,intersect(colnames(testSet), colnames(trainSet))]
+
+testSet <- predict(prepTrainSetObj, 
+                       newdata=testSet[,
+                                       intersect(colnames(testSet), 
+                                                 colnames(trainSet))])
+# replace all NA's with 0 predict will work (don't imput the values)
+testSet[is.na(testSet)] <- 0
+```
+
+#Make model
+The model was trained using the Random Forest method. 
+```{r echo=FALSE, include=FALSE}
+my_model_file <- "modFit.Rds"
+if (file.exists(my_model_file)) {
+    # Read the model in and assign it to a variable.
+    modFit <- readRDS(my_model_file)
+} else {
+    # Otherwise, run the training.
+    modFit <- train(classe ~ ., data=myTrainSet, method="rf", prox=TRUE)
+    saveRDS(modFit, my_model_file)
+}
+```
+
+###Variable Importance
+```{r}
+plot(modFit)
+```
+
+```{r echo=FALSE}
+importance <- varImp(modFit)
+importance
+plot(importance)
+```
+
+###Confusion Matrix
+```{r echo=FALSE}
+predictedSet <- predict(modFit, myProbeSet)
+cMatrix <- confusionMatrix(myProbeSet$classe, predictedSet)
+cMatrix
+```
+
+###Accuracy
+```{r echo=FALSE}
+# check accuracy and out of sample error
+accuracy <- postResample(myProbeSet$classe, predictedSet)
+outOfSampleErr <- 1 - accuracy[[1]]
+```
+Based on the probe data set, the accuracy is `r accuracy[[1]]` and the out of sample error is `r outOfSampleErr`.
+
+###Checking the model data against the training and probe data sets
+####Training data set
+```{r echo=FALSE}
+# check train
+predictMyTrainSet <- predict(modFit, newdata=myTrainSet)
+
+results <- data.frame(predictVal = predictMyTrainSet, expectedVal = myTrainSet$classe)
+results$match <- results$predictVal == results$expectedVal
+
+results %>% group_by(expectedVal, match) %>% summarise(n = n())
+```
+
+####Probe data set
+```{r echo=FALSE}
+# check probe
+predictMyProbeSet <- predict(modFit, newdata=myProbeSet)
+
+results <- data.frame(predictVal = predictMyProbeSet, expectedVal = myProbeSet$classe)
+results$match <- results$predictVal == results$expectedVal
+
+results %>% group_by(expectedVal, match) %>% summarise(n = n())
+```
+
+##Answers
+Results from applying the test data set to the model:
+```{r echo=FALSE}
+answers = predict(modFit, newdata=testSet)
+
+pml_write_files = function(dir, x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0(dir, '/',"problem_id_",i,".txt")
+    write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+  }
+}
+
+pml_write_files('answers', answers)
+```
+
+```{r}
+answers
+```
