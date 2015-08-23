@@ -3,11 +3,12 @@ title: "Correct Weight Lifting through Machine Learning"
 author: "Phillip Chin"
 date: "Tuesday, August 18, 2015"
 output:
+  pdf_document: default
   html_document:
-    pandoc_args: [
-      "+RTS", "-K64m",
-      "-RTS"
-    ]
+    pandoc_args:
+    - +RTS
+    - -K64m
+    - -RTS
 ---
 
 ```{r echo=FALSE, include=FALSE}
