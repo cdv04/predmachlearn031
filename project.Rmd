@@ -1,5 +1,5 @@
 ---
-title: "Project"
+title: "Correct Weight Lifting through Machine Learning"
 author: "Phillip Chin"
 date: "Tuesday, August 18, 2015"
 output:
@@ -26,16 +26,17 @@ library(hash)
 setwd('C:/Users/phil/Documents/coursera/Data Science/machine_learning/predmachlearn031')
 ```
 
-##Executive Summary
-A - exactly according to the specification
-B - throwing the elbows to the front
-C - lifting the dumbbell only halfway 
-D - lowering the dumbbell only halfway 
-E - throwing the hips to the front 
+Based on exercise sensor data, we would like to determine if someone else performing an exercise correctly.  In this case, the data that will be used is from 6 participants doing Unilateral Dumbbell Biceps Curls while wearing various sensors.  Each repetition was categorized into one of the following classes: 
 
-Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3jEzlbcK7
+* A - exactly according to the specification
+* B - throwing the elbows to the front
+* C - lifting the dumbbell only halfway 
+* D - lowering the dumbbell only halfway 
+* E - throwing the hips to the front 
 
-##Loading and Cleaning Data/Exploratory Data Analysis
+Using this data, we will use random forest as the model for predicting the classes for future input data. 
+
+##Exploratory Data Analysis/Loading and Cleaning Data
 ```{r echo=FALSE}
 removeBadColumns <- function(df) {
   cleanedDf <- df[, -which(colnames(df) %in% c("X", "user_name", 
@@ -58,8 +59,10 @@ trainSet <- read.csv('pml-training.csv', header = TRUE, na.strings = c("NA", "#D
 trainSet <- removeBadColumns(trainSet)
 ```
 There are two files:
+
 * pml-training.csv - training data set
 * pml-testing.csv - test data set
+
 Some data cleaning was necessary.  All columns with only NA's were removed.  All columns with a near zero variance were also removed.  In the training data set, there are some extra non-sensor measurement data (i.e. user_name, raw_timestamp_part_1, etc.) and calculated data (i.e. total_..., kurtosis_..., max_..., etc.).  Those fields were removed to further reduce the training set and were not used in the training.  
 
 The training data set were normalized(center/scale). NA's were replaced with imputted values(knnImpute). 
@@ -80,7 +83,7 @@ trainSet <- imputTrainSet
 set.seed(5150)
 trainPercent <- 0.25
 ```
-`r (trainPercent*100)`% of the training data set was used for the actual training.  The rest was used as our probe data set for checking the accuracy of our model.
+`r (trainPercent*100)`% of the training data set was used for the actual training.  The rest was used as our probe data set for checking the accuracy of our model through cross validation. A parred down training set was use to try to reduce the training time.
 ```{r echo=FALSE}
 inTrain <- createDataPartition(y=trainSet$classe, p=trainPercent, 
                                list=FALSE)
@@ -124,7 +127,7 @@ testSet <- predict(prepTrainSetObj,
 testSet[is.na(testSet)] <- 0
 ```
 
-#Make model
+#Model Training
 The model was trained using the Random Forest method. 
 ```{r echo=FALSE, include=FALSE}
 my_model_file <- "modFit.Rds"
@@ -139,52 +142,54 @@ if (file.exists(my_model_file)) {
 ```
 
 ###Variable Importance
-```{r}
+The model ended up using `r modFit$finalModel$tuneValue$mtry` out of the `r ncol(myTrainSet) - 1` variables from the trainning set as Selected Predictors. 
+```{r echo=FALSE}
 plot(modFit)
 ```
 
-```{r echo=FALSE}
+Here are all of the variables ranked bases on importance.
+```{r echo=FALSE, include=FALSE}
 importance <- varImp(modFit)
-importance
+```
+
+```{r echo=FALSE}
 plot(importance)
 ```
 
-###Confusion Matrix
+###Cross Validation
+The probe data set was fed back into our model for cross validation.
+
+####Confusion Matrix
+This is confusion matrix using the probe data set.  Most of the predictions lie on the diagonal so the model is accurately predicting the correct class in most cases.
+
 ```{r echo=FALSE}
 predictedSet <- predict(modFit, myProbeSet)
 cMatrix <- confusionMatrix(myProbeSet$classe, predictedSet)
-cMatrix
+cMatrix$table
 ```
 
-###Accuracy
+Going back to the training set, all predictions are along the diagonal.
+```{r echo=FALSE}
+trainPredictedSet <- predict(modFit, myTrainSet)
+tcMatrix <- confusionMatrix(myTrainSet$classe, trainPredictedSet)
+tcMatrix$table
+```
+
+####Accuracy
 ```{r echo=FALSE}
 # check accuracy and out of sample error
 accuracy <- postResample(myProbeSet$classe, predictedSet)
 outOfSampleErr <- 1 - accuracy[[1]]
+inSampleErr <- 1 - tcMatrix$overall[1]
 ```
-Based on the probe data set, the accuracy is `r accuracy[[1]]` and the out of sample error is `r outOfSampleErr`.
+Based on the probe data set, the accuracy is `r accuracy[[1]]` and the **out of sample error** is `r outOfSampleErr`.
 
-###Checking the model data against the training and probe data sets
-####Training data set
+Going back to the test data set, the accuracy is `r tcMatrix$overall[1]` and the **in sample error** is `r inSampleErr`.
+
+####Key Quantities
+Here are the key quantities of the model based on the probe data set.  They are all above 95%.
 ```{r echo=FALSE}
-# check train
-predictMyTrainSet <- predict(modFit, newdata=myTrainSet)
-
-results <- data.frame(predictVal = predictMyTrainSet, expectedVal = myTrainSet$classe)
-results$match <- results$predictVal == results$expectedVal
-
-results %>% group_by(expectedVal, match) %>% summarise(n = n())
-```
-
-####Probe data set
-```{r echo=FALSE}
-# check probe
-predictMyProbeSet <- predict(modFit, newdata=myProbeSet)
-
-results <- data.frame(predictVal = predictMyProbeSet, expectedVal = myProbeSet$classe)
-results$match <- results$predictVal == results$expectedVal
-
-results %>% group_by(expectedVal, match) %>% summarise(n = n())
+cMatrix$byClass[,c(1,2,3,4,8)]
 ```
 
 ##Answers
@@ -203,6 +208,6 @@ pml_write_files = function(dir, x){
 pml_write_files('answers', answers)
 ```
 
-```{r}
+```{r echo=FALSE}
 answers
 ```
