@@ -1,5 +1,6 @@
-# Practical Machine Learning - predmachlearn-031
-## Course Project
+# Practical Machine Learning 
+## predmachlearn-031
+### Course Project
 
 The main files are:
 * project.Rmd - knitr code 
